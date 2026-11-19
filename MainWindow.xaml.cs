@@ -378,6 +378,12 @@ public partial class MainWindow : Window
     // ================================================================ Clavier / focus
     void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            Open_Click(this, e);
+            e.Handled = true;
+            return;
+        }
         if (_info == null || Keyboard.FocusedElement is TextBox or ComboBox or ComboBoxItem) return;
         bool shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
         switch (e.Key)
@@ -638,7 +644,9 @@ public partial class MainWindow : Window
         var dlg = new SaveFileDialog
         {
             Filter = "MP4|*.mp4",
-            FileName = System.IO.Path.GetFileNameWithoutExtension(_info.Path) + (crop != null ? "_crop" : NeedsReencode() ? "_edit" : "_cut") + ".mp4",
+            FileName = UniqueFileName(System.IO.Path.GetDirectoryName(_info.Path) ?? "",
+                System.IO.Path.GetFileNameWithoutExtension(_info.Path) + (crop != null ? "_crop" : NeedsReencode() ? "_edit" : "_cut"),
+                ".mp4"),
             InitialDirectory = System.IO.Path.GetDirectoryName(_info.Path)
         };
         if (dlg.ShowDialog() != true) return;
@@ -690,6 +698,15 @@ public partial class MainWindow : Window
             TaskbarInfo.ProgressState = TaskbarItemProgressState.None;
             SetBusy(false);
         }
+    }
+
+    /// <summary>Nom de fichier inexistant dans le dossier : nom.mp4, sinon nom_2.mp4, nom_3.mp4…</summary>
+    static string UniqueFileName(string folder, string baseName, string ext)
+    {
+        string name = baseName + ext;
+        for (int i = 2; File.Exists(System.IO.Path.Combine(folder, name)); i++)
+            name = $"{baseName}_{i}{ext}";
+        return name;
     }
 
     static void OpenInExplorer(string file)

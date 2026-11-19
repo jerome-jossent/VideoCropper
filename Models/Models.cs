@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 
 namespace VideoCropper.Models;
@@ -22,7 +23,8 @@ public record VideoInfo(
     string? ColorPrimaries,
     string? ColorTransfer,
     string? ColorSpace,
-    int Rotation)           // rotation des métadonnées, en degrés horaires à appliquer à l'affichage (0/90/180/270)
+    int Rotation,           // rotation des métadonnées, en degrés horaires à appliquer à l'affichage (0/90/180/270)
+    DateTime? CreationTimeUtc) // date de début d'enregistrement (métadonnée creation_time), si présente
 {
     /// <summary>Dimensions telles qu'affichées par un lecteur (rotation des métadonnées appliquée).</summary>
     public int DisplayWidth => Rotation % 180 == 0 ? Width : Height;

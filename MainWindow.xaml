@@ -24,12 +24,8 @@
 
             <!-- Barre d'ouverture -->
             <DockPanel Grid.Row="0">
-                <Button x:Name="OpenBtn" Style="{StaticResource IconButton}" Margin="0,0,10,0" Click="Open_Click"
-                        DockPanel.Dock="Left" ToolTip="Ouvrir une vidéo…">
-                    <Image Source="Images/video_load.png" Style="{StaticResource IconImage}"/>
-                </Button>
                 <TextBlock x:Name="InfoText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                           Text="Aucune vidéo chargée"/>
+                           Text="Aucune vidéo chargée (Ctrl+O pour ouvrir un fichier)"/>
             </DockPanel>
 
             <!-- Aperçu + ROI (et cadre d'accueil tant qu'aucune vidéo n'est chargée) -->

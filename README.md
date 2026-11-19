@@ -1,3 +1,4 @@
+
 ![alt text](https://github.com/jerome-jossent/VideoCropper/blob/main/VideoCropper.png)
 
 # Video Cropper (WPF / .NET 8)
@@ -15,7 +16,11 @@ Recadrage (ROI dessinée à la souris) et découpe temporelle d'une vidéo, via 
 5. Choisir encodeur et débit, puis Exporter.
 
 ## Modes
-- Sans ROI + « Copie » : `-c copy`, aucune perte, coupe sur image clé.
+- Sans ROI + « Copie » : aucune perte, coupe sur image clé.
 - Avec ROI : ré-encodage. Encodeur « Auto » = même codec que la source. 
   Débit par défaut = débit source × (surface ROI / surface source).
   Les encodeurs matériels (NVENC, QSV, AMF) sont détectés par test réel.
+
+
+
+

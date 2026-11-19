@@ -114,7 +114,8 @@ public static class FfmpegService
             fps, duration, (long)(br / 1000),
             a.ValueKind != JsonValueKind.Undefined,
             Known(S(v, "color_primaries")), Known(S(v, "color_transfer")), Known(S(v, "color_space")),
-            ReadRotation(v));
+            ReadRotation(v),
+            ReadCreationTime(format, v));
     }
 
     /// <summary>
@@ -143,6 +144,17 @@ public static class FfmpegService
         if (deg == null) return 0;
         int q = (int)(Math.Round(deg.Value / 90.0) * 90);
         return ((q % 360) + 360) % 360;
+    }
+
+    /// <summary>Date de début d'enregistrement (métadonnée creation_time), en UTC, ou null.</summary>
+    static DateTime? ReadCreationTime(JsonElement format, JsonElement v)
+    {
+        string? s = null;
+        if (format.TryGetProperty("tags", out var ft)) s = S(ft, "creation_time");
+        if (string.IsNullOrEmpty(s) && v.TryGetProperty("tags", out var vt)) s = S(vt, "creation_time");
+        if (!DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dto)) return null;
+        return dto.Year < 1990 ? null : dto.UtcDateTime; // certaines caméras écrivent 1970 / 1904 quand l'horloge n'est pas réglée
     }
 
     /// <summary>Filtre FFmpeg pour une rotation horaire de 0/90/180/270°.</summary>
@@ -375,6 +387,14 @@ public static class FfmpegService
             if (j.Info.ColorSpace != null) a.AddRange(new[] { "-colorspace", j.Info.ColorSpace });
         }
 
+        // Date de début interne du clip = début d'origine + temps retiré au début
+        if (j.Info.CreationTimeUtc is DateTime created)
+            a.AddRange(new[]
+            {
+                "-metadata",
+                "creation_time=" + created.AddSeconds(j.Start).ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture)
+            });
+
         a.Add(j.Output);
         return a;
     }
@@ -409,7 +429,37 @@ public static class FfmpegService
             string s; lock (err) s = err.ToString();
             throw new InvalidOperationException("FFmpeg a échoué :\n" + (s.Length > 1500 ? s[^1500..] : s));
         }
+        ApplySourceTimestamps(job);
         progress.Report(1);
+    }
+
+    /// <summary>
+    /// Donne au fichier créé la date/heure du fichier source, corrigée du temps retiré.
+    ///  - date du fichier = DÉBUT de la vidéo  → source + temps retiré au début
+    ///  - date du fichier = FIN de la vidéo    → source − temps retiré à la fin
+    /// (appareils photo / caméras : la date de modification est en général celle de la fin d'enregistrement)
+    /// Le cas est détecté avec la métadonnée creation_time ; sans elle, on suppose que la date = début.
+    /// </summary>
+    static void ApplySourceTimestamps(ExportJob job)
+    {
+        try
+        {
+            var info = job.Info;
+            DateTime mtime = File.GetLastWriteTimeUtc(info.Path);
+            double shiftSeconds = FileDateIsEnd(info, mtime) ? job.End - info.Duration : job.Start;
+            DateTime t = mtime.AddSeconds(shiftSeconds);
+            File.SetCreationTimeUtc(job.Output, t);
+            File.SetLastWriteTimeUtc(job.Output, t);
+        }
+        catch { /* la date du fichier n'est pas critique */ }
+    }
+
+    static bool FileDateIsEnd(VideoInfo info, DateTime mtimeUtc)
+    {
+        if (info.CreationTimeUtc is not DateTime start) return false;
+        double dStart = Math.Abs((mtimeUtc - start).TotalSeconds);
+        double dEnd = Math.Abs((mtimeUtc - start.AddSeconds(info.Duration)).TotalSeconds);
+        return dEnd <= 300 && dEnd < dStart; // proche (5 min) de la fin d'enregistrement et plus proche de la fin que du début
     }
 
     static void TryDelete(string path) { try { File.Delete(path); } catch { } }
