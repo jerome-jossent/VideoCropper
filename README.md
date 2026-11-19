@@ -1,3 +1,5 @@
+![alt text](https://github.com/jerome-jossent/VideoCropper/blob/main/VideoCropper.png)
+
 # Video Cropper (WPF / .NET 8)
 Recadrage (ROI dessinée à la souris) et découpe temporelle d'une vidéo, via FFmpeg.
 
