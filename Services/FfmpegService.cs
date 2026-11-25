@@ -207,7 +207,7 @@ public static class FfmpegService
     /// Se termine à la fin de la vidéo ou à l'annulation.
     /// </summary>
     public static async Task PlayAsync(VideoInfo info, double startT, int width, int rotation,
-        Action<byte[], int, int, double> onFrame, CancellationToken ct)
+        AudioPlayer? audio, Action<byte[], int, int, double> onFrame, CancellationToken ct)
     {
         var (ow, oh) = info.Oriented(rotation);
         int height = Math.Max(2, (int)Math.Round(width * (double)oh / ow / 2) * 2);
@@ -225,8 +225,12 @@ public static class FfmpegService
         var stream = p.StandardOutput.BaseStream;
         int frameSize = width * height * 3;
         var buf = new byte[frameSize];
-        var clock = Stopwatch.StartNew();
+        var clock = new Stopwatch();
         long n = 0;
+        bool first = true;
+
+        // Horloge maîtresse : le son (synchro image/son) ; à défaut, un chronomètre
+        double Now() => audio != null ? audio.Position : clock.Elapsed.TotalSeconds;
 
         while (!ct.IsCancellationRequested)
         {
@@ -238,9 +242,20 @@ public static class FfmpegService
                 read += r;
             }
 
+            if (first)
+            {
+                // La 1re image est prête : on démarre le son et l'horloge au même instant
+                first = false;
+                if (audio != null) await audio.StartAsync(ct);
+                clock.Restart();
+            }
+
             double target = n / info.Fps;
-            double wait = target - clock.Elapsed.TotalSeconds;
-            if (wait > 0.002) await Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            if (Now() - target > 0.25) { n++; continue; } // trop en retard : on saute l'image pour rattraper le son
+
+            double wait;
+            while ((wait = target - Now()) > 0.002)
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(wait, 0.02)), ct);
 
             onFrame(buf, width, height, startT + target);
             n++;

@@ -81,6 +81,11 @@
                         <Button x:Name="PlayBtn" Content="▶ Lecture" MinWidth="100" Click="Play_Click"
                                 ToolTip="Lecture / pause (Espace)"/>
                         <Button Content="Image ▶" Click="NextFrame_Click" Margin="0"/>
+                        <Button x:Name="MuteBtn" Content="🔊" MinWidth="36" Margin="20,0,6,0" Click="Mute_Click"
+                                ToolTip="Couper / rétablir le son"/>
+                        <Slider x:Name="VolumeSlider" Width="90" Minimum="0" Maximum="1" Value="0.8"
+                                VerticalAlignment="Center" Focusable="False" ToolTip="Volume"
+                                ValueChanged="Volume_Changed"/>
                     </StackPanel>
                     <Button Grid.Column="2" Style="{StaticResource IconButton}" HorizontalAlignment="Right"
                             Click="SetEnd_Click" ToolTip="Définir la fin (O)">

@@ -69,6 +69,8 @@ public partial class MainWindow : Window
             UpdateTimeline();
         };
 
+        Closed += (_, _) => { _playCts?.Cancel(); _audio?.Dispose(); };
+
         Loaded += async (_, _) =>
         {
             Focus();
@@ -209,6 +211,34 @@ public partial class MainWindow : Window
         finally { _extracting = false; }
     }
 
+    // ================================================================ Volume
+    AudioPlayer? _audio;
+    double _volume = 0.8;
+    bool _muted;
+
+    void ApplyVolume()
+    {
+        try { if (_audio != null) _audio.Volume = _muted ? 0 : _volume; } catch { }
+    }
+
+    void UpdateMuteButton() => MuteBtn.Content = _muted ? "🔇" : "🔊";
+
+    void Volume_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded) return;
+        _volume = e.NewValue;
+        _muted = _volume <= 0.001;
+        UpdateMuteButton();
+        ApplyVolume();
+    }
+
+    void Mute_Click(object sender, RoutedEventArgs e)
+    {
+        _muted = !_muted;
+        UpdateMuteButton();
+        ApplyVolume();
+    }
+
     // ================================================================ Lecture
     void Play_Click(object sender, RoutedEventArgs e) => TogglePlay();
 
@@ -235,14 +265,27 @@ public partial class MainWindow : Window
         Timeline.Value = t0;
 
         var cts = _playCts = new CancellationTokenSource();
+
+        // Son : décodé en parallèle, démarré avec la première image
+        AudioPlayer? audio = null;
+        if (info.HasAudio)
+        {
+            try { audio = new AudioPlayer(FfmpegService.FfmpegPath, info.Path, t0); }
+            catch (Exception ex) { Status.Text = "Audio : " + ex.Message; }
+        }
+        _audio = audio;
+        ApplyVolume();
+
         try
         {
-            await FfmpegService.PlayAsync(info, t0, 960, _userRot, ShowPlayFrame, cts.Token);
+            await FfmpegService.PlayAsync(info, t0, 960, _userRot, audio, ShowPlayFrame, cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Status.Text = "Lecture : " + ex.Message.Split('\n')[0]; }
         finally
         {
+            audio?.Dispose();
+            if (_audio == audio) _audio = null;
             if (_playCts == cts) // fin naturelle de la vidéo
             {
                 _playing = false;
@@ -266,6 +309,8 @@ public partial class MainWindow : Window
     {
         if (!_playing) return;
         _playCts?.Cancel();
+        _audio?.Dispose(); // silence immédiat
+        _audio = null;
         _playing = false;
         UpdatePlayButton();
         RequestFrame(); // image exacte à la position d'arrêt
