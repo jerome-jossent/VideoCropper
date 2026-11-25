@@ -251,16 +251,16 @@ public partial class MainWindow : Window
 
     void UpdatePlayButton() => PlayBtn.Content = _playing ? "⏸ Pause" : "▶ Lecture";
 
-    async Task StartPlaybackAsync()
+    async Task StartPlaybackAsync(bool jog = false)
     {
         if (_info == null || _playing) return;
         var info = _info;
 
         double t0 = Timeline.Value;
-        if (t0 >= Timeline.Maximum - 0.1) t0 = Math.Min(_start, Timeline.Maximum); // fin atteinte : on repart du début
+        if (!jog && t0 >= Timeline.Maximum - 0.1) t0 = Math.Min(_start, Timeline.Maximum); // fin atteinte : on repart du début
         _playing = true;
         // Si on démarre avant le repère de fin, la lecture s'arrête dessus (aperçu de la découpe)
-        _playStopAtEnd = t0 < _end - 1.0 / info.Fps;
+        _playStopAtEnd = !jog && t0 < _end - 1.0 / info.Fps;
         UpdatePlayButton();
         Timeline.Value = t0;
 
@@ -335,8 +335,88 @@ public partial class MainWindow : Window
         Timeline.Value = Math.Clamp(Timeline.Value + dir * step, 0, Timeline.Maximum);
     }
 
-    void PrevFrame_Click(object s, RoutedEventArgs e) => Step(-1, false);
-    void NextFrame_Click(object s, RoutedEventArgs e) => Step(1, false);
+    // ---- Zone « image précédente / suivante »
+    //  Clic gauche : image suivante ; maintenu : lecture (avec le son) jusqu'au relâchement.
+    //  Clic droit  : image précédente ; maintenu : lecture arrière à vitesse normale (sans son).
+    const int JogHoldMs = 350;
+    int _jogDir;                       // 0 = inactif, 1 = avant (gauche), -1 = arrière (droit)
+    bool _jogHolding;
+    CancellationTokenSource? _jogHoldCts;
+
+    async void Jog_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_info == null || _jogDir != 0) return;
+        if (e.ChangedButton != MouseButton.Left && e.ChangedButton != MouseButton.Right) return;
+
+        _jogDir = e.ChangedButton == MouseButton.Left ? 1 : -1;
+        JogZone.CaptureMouse();
+        JogZone.LostMouseCapture -= Jog_LostCapture;
+        JogZone.LostMouseCapture += Jog_LostCapture;
+        e.Handled = true;
+
+        Step(_jogDir, false); // réaction immédiate : une image
+        var cts = _jogHoldCts = new CancellationTokenSource();
+        try { await Task.Delay(JogHoldMs, cts.Token); }
+        catch (OperationCanceledException) { return; } // relâché avant : simple clic
+
+        if (_jogDir == 0 || _info == null) return;
+        _jogHolding = true;
+        if (_jogDir > 0) _ = StartPlaybackAsync(jog: true);
+        else _ = StartReversePlaybackAsync();
+    }
+
+    void Jog_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        int dir = e.ChangedButton == MouseButton.Left ? 1 : e.ChangedButton == MouseButton.Right ? -1 : 0;
+        if (dir == 0 || dir != _jogDir) return;
+        EndJog();
+        e.Handled = true;
+    }
+
+    void Jog_LostCapture(object sender, MouseEventArgs e)
+    {
+        if (_jogDir != 0) EndJog(); // fenêtre perdue (Alt+Tab…) : on arrête
+    }
+
+    void EndJog()
+    {
+        _jogHoldCts?.Cancel();
+        _jogHoldCts = null;
+        bool wasHolding = _jogHolding;
+        _jogDir = 0;
+        _jogHolding = false;
+        JogZone.ReleaseMouseCapture();
+        if (wasHolding) StopPlayback();
+    }
+
+    async Task StartReversePlaybackAsync()
+    {
+        if (_info == null || _playing) return;
+        var info = _info;
+        double t0 = Timeline.Value;
+        if (t0 <= 0.001) return; // déjà au début
+
+        _playing = true;
+        _playStopAtEnd = false;
+        UpdatePlayButton();
+
+        var cts = _playCts = new CancellationTokenSource();
+        try
+        {
+            await FfmpegService.PlayReverseAsync(info, t0, 960, _userRot, ShowPlayFrame, cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Status.Text = "Lecture arrière : " + ex.Message.Split('\n')[0]; }
+        finally
+        {
+            if (_playCts == cts) // début de la vidéo atteint
+            {
+                _playing = false;
+                UpdatePlayButton();
+                RequestFrame();
+            }
+        }
+    }
 
     // Utilisent la position actuelle de la tête de lecture (y compris depuis le menu clic droit)
     void SetStart_Click(object? s = null, RoutedEventArgs? e = null)

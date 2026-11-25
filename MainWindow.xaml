@@ -77,10 +77,27 @@
                         <Image Source="Images/VideoCropper_deb.png" Style="{StaticResource IconImage}"/>
                     </Button>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="◀ Image" Click="PrevFrame_Click"/>
+                        <Border x:Name="JogZone" BorderBrush="#ADADAD" BorderThickness="1" CornerRadius="3"
+                                Padding="18,5" Margin="0,0,8,0" Cursor="Hand"
+                                MouseDown="Jog_MouseDown" MouseUp="Jog_MouseUp"
+                                ToolTip="Clic gauche : image suivante (maintenu : lecture)&#10;Clic droit : image précédente (maintenu : lecture arrière, sans son)">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="#EDEDED"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#DCDCDC"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseCaptured" Value="True">
+                                            <Setter Property="Background" Value="#BFD7EE"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="◀  Image  ▶" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
                         <Button x:Name="PlayBtn" Content="▶ Lecture" MinWidth="100" Click="Play_Click"
                                 ToolTip="Lecture / pause (Espace)"/>
-                        <Button Content="Image ▶" Click="NextFrame_Click" Margin="0"/>
                         <Button x:Name="MuteBtn" Content="🔊" MinWidth="36" Margin="20,0,6,0" Click="Mute_Click"
                                 ToolTip="Couper / rétablir le son"/>
                         <Slider x:Name="VolumeSlider" Width="90" Minimum="0" Maximum="1" Value="0.8"
@@ -184,7 +201,7 @@
                     </WrapPanel>
 
                     <TextBlock Foreground="Gray" Margin="0,8,0,0" TextWrapping="Wrap"
-                               Text="Dessinez la ROI à la souris sur l'image (un clic simple l'efface) ou saisissez ses valeurs. Sans ROI, la découpe se fait sans ré-encodage ; avec une ROI, la vidéo est ré-encodée. Molette = zoom (image et timeline), clic droit ou milieu + glisser = déplacer la vue, clic droit simple sur la timeline = menu début/fin. Raccourcis : Espace = lecture/pause, ←/→ image par image (Maj = 1 s), I = début, O = fin."/>
+                               Text="Dessinez la ROI à la souris sur l'image (un clic simple l'efface) ou saisissez ses valeurs. Sans ROI, la découpe se fait sans ré-encodage ; avec une ROI, la vidéo est ré-encodée. Molette = zoom (image et timeline), clic droit ou milieu + glisser = déplacer la vue, clic droit simple sur la timeline = menu début/fin. Zone ◀ Image ▶ : clic gauche = image suivante (maintenu = lecture), clic droit = image précédente (maintenu = lecture arrière, sans son). Raccourcis : Espace = lecture/pause, ←/→ image par image (Maj = 1 s), I = début, O = fin."/>
                 </StackPanel>
             </Border>
         </Grid>
