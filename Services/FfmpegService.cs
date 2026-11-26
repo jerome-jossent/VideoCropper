@@ -263,6 +263,70 @@ public static class FfmpegService
         }
     }
 
+    // ---------------------------------------------------------------- Forme d'onde
+    /// <summary>
+    /// Décode l'audio en mono 8 kHz et en tire un pic d'amplitude toutes les 5 ms. Les données sont écrites
+    /// au fur et à mesure dans <paramref name="data"/> ; onProgress est appelé environ toutes les 400 ms.
+    /// À exécuter hors du thread UI (Task.Run).
+    /// </summary>
+    public static async Task LoadWaveformAsync(VideoInfo info, WaveformData data, Action onProgress, CancellationToken ct)
+    {
+        const int Rate = 8000;
+        const int SamplesPerBin = Rate / WaveformData.BinsPerSecond; // 40
+        var args = new[]
+        {
+            "-hide_banner", "-loglevel", "error", "-i", info.Path,
+            "-vn", "-ac", "1", "-ar", Rate.ToString(CultureInfo.InvariantCulture), "-f", "s16le", "pipe:1"
+        };
+        using var p = Process.Start(Psi(FfmpegPath, args))!;
+        using var reg = ct.Register(() => { try { p.Kill(true); } catch { } });
+        _ = p.StandardError.ReadToEndAsync();
+
+        var stream = p.StandardOutput.BaseStream;
+        var buf = new byte[1 << 16];
+        int have = 0, bin = 0, inBin = 0, max = 0;
+        var sw = Stopwatch.StartNew();
+
+        while (true)
+        {
+            int n = await stream.ReadAsync(buf, have, buf.Length - have, ct);
+            if (n == 0) break;
+            have += n;
+
+            int usable = have & ~1; // échantillons de 2 octets
+            for (int i = 0; i < usable; i += 2)
+            {
+                int s = (short)(buf[i] | (buf[i + 1] << 8));
+                if (s < 0) s = -s;
+                if (s > max) max = s;
+                if (++inBin == SamplesPerBin)
+                {
+                    if (bin < data.Peaks.Length) data.Peaks[bin] = (ushort)Math.Min(max, 32767);
+                    bin++;
+                    inBin = 0;
+                    max = 0;
+                }
+            }
+            if (have > usable) buf[0] = buf[usable]; // octet restant
+            have -= usable;
+
+            data.Filled = Math.Min(bin, data.Peaks.Length);
+            if (sw.ElapsedMilliseconds > 400)
+            {
+                sw.Restart();
+                onProgress();
+            }
+        }
+
+        if (inBin > 0 && bin < data.Peaks.Length)
+        {
+            data.Peaks[bin] = (ushort)Math.Min(max, 32767);
+            bin++;
+        }
+        data.Filled = Math.Min(bin, data.Peaks.Length);
+        onProgress();
+    }
+
     // ---------------------------------------------------------------- Rembobinage
     /// <summary>
     /// Rembobinage à vitesse réelle : la position recule au rythme de l'horloge, et l'image affichée est celle

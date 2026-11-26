@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using VideoCropper.Models;
 
 namespace VideoCropper.Controls;
 
@@ -29,6 +31,7 @@ public class TimelineBar : FrameworkElement
     static readonly Brush GreenBrush = Br(0x3C, 0xC8, 0x78);
     static readonly Brush RedBrush = Br(0xFF, 0x4D, 0x4D);
     static readonly Brush TextBrush = Br(0xBB, 0xBB, 0xBB);
+    static readonly Brush WaveBrush = Br(0x9E, 0xD0, 0xFF, 210);
     static readonly Brush OverviewBg = Br(0x4A, 0x4A, 0x4A);
     static readonly Pen TickPen = Frozen(new Pen(Br(0x88, 0x88, 0x88), 1));
     static readonly Pen MinorPen = Frozen(new Pen(Br(0x66, 0x66, 0x66), 1));
@@ -50,6 +53,21 @@ public class TimelineBar : FrameworkElement
     public event EventHandler? RangeChanged;
     public event EventHandler? ScrubStarted;
     public event EventHandler? ScrubCompleted;
+
+    WaveformData? _wave;
+
+    /// <summary>Enveloppe audio à dessiner dans la piste (null = rien).</summary>
+    public WaveformData? Waveform
+    {
+        get => _wave;
+        set { _wave = value; InvalidateVisual(); }
+    }
+
+    /// <summary>À appeler quand de nouvelles données de forme d'onde sont disponibles.</summary>
+    public void RefreshWaveform() => InvalidateVisual();
+
+    /// <summary>Vrai pendant un glissement de la tête de lecture (et non d'un repère début/fin).</summary>
+    public bool IsScrubbingPlayhead => _drag == Drag.Scrub;
 
     public double Duration => _duration;
     public double Maximum => Math.Max(0.001, _duration - 1 / _fps);
@@ -144,6 +162,7 @@ public class TimelineBar : FrameworkElement
         double l = Math.Max(0, xs), r = Math.Min(w, xe);
         if (r > l) dc.DrawRectangle(SelBrush, null, new Rect(l, top, r - l, Math.Max(0, bottom - top)));
 
+        DrawWaveform(dc, w, top, bottom);
         DrawRuler(dc, w, top);
 
         // Repères début / fin
@@ -166,6 +185,62 @@ public class TimelineBar : FrameworkElement
         }
 
         DrawOverview(dc, w, h);
+    }
+
+    /// <summary>Niveau d'affichage 0..1 d'un pic (échelle en dB, de -54 dB à 0 dB).</summary>
+    static double Level(int peak)
+    {
+        if (peak <= 0) return 0;
+        double db = 20 * Math.Log10(peak / 32768.0);
+        return Math.Clamp((db + 54) / 54, 0, 1);
+    }
+
+    /// <summary>
+    /// Forme d'onde (symétrique) : pour chaque colonne de pixels, le pic maximal des tranches de 5 ms
+    /// couvertes par cette colonne. S'adapte donc automatiquement au zoom et au défilement.
+    /// </summary>
+    void DrawWaveform(DrawingContext dc, double w, double top, double bottom)
+    {
+        var wf = _wave;
+        if (wf == null || _duration <= 0) return;
+        int filled = wf.Filled;
+        if (filled <= 0) return;
+
+        double mid = (top + bottom) / 2, half = (bottom - top) / 2 - 1;
+        if (half <= 1) return;
+
+        var peaks = wf.Peaks;
+        double bps = WaveformData.BinsPerSecond;
+        int cols = (int)Math.Ceiling(w);
+        var up = new List<Point>(cols);
+        var down = new List<Point>(cols);
+
+        for (int x = 0; x < cols; x++)
+        {
+            int b0 = Math.Max(0, (int)Math.Floor(T(x) * bps));
+            if (b0 >= filled) break; // la suite n'est pas encore calculée
+            int b1 = Math.Min(filled, Math.Max(b0 + 1, (int)Math.Ceiling(T(x + 1) * bps)));
+
+            int max = 0;
+            for (int b = b0; b < b1; b++)
+                if (peaks[b] > max) max = peaks[b];
+
+            double h = Math.Max(0.5, Level(max) * half);
+            up.Add(new Point(x + 0.5, mid - h));
+            down.Add(new Point(x + 0.5, mid + h));
+        }
+        if (up.Count < 2) return;
+
+        var g = new StreamGeometry();
+        using (var ctx = g.Open())
+        {
+            ctx.BeginFigure(up[0], true, true);
+            ctx.PolyLineTo(up, true, false);
+            down.Reverse();
+            ctx.PolyLineTo(down, true, false);
+        }
+        g.Freeze();
+        dc.DrawGeometry(WaveBrush, null, g);
     }
 
     void DrawRuler(DrawingContext dc, double w, double top)

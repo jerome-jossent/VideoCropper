@@ -49,7 +49,7 @@
 
             <!-- Timeline -->
             <StackPanel Grid.Row="2">
-                <ctl:TimelineBar x:Name="Timeline" Height="66" Margin="0,0,0,6">
+                <ctl:TimelineBar x:Name="Timeline" Height="84" Margin="0,0,0,6">
                     <ctl:TimelineBar.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Définir le début (position actuelle)" Click="SetStart_Click">

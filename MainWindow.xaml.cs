@@ -40,7 +40,7 @@ public partial class MainWindow : Window
     bool _exporting;
 
     // Aperçu (extraction d'une image)
-    bool _dragging, _extracting, _pendingFast;
+    bool _dragging, _extracting, _pendingFast, _resumeAfterScrub;
     double? _pendingT;
 
     // Lecture
@@ -54,8 +54,23 @@ public partial class MainWindow : Window
         Roi.RoiChanged += OnRoiChanged;
         Roi.ZoomChanged += (_, _) => ZoomText.Text = Roi.Zoom > 1.01 ? $"Zoom ×{Roi.Zoom:0.#}" : "";
 
-        Timeline.ScrubStarted += (_, _) => { StopPlayback(); _dragging = true; };
-        Timeline.ScrubCompleted += (_, _) => { _dragging = false; RequestFrame(); }; // image exacte au relâchement
+        // Clic / glissement sur la timeline pendant la lecture : la lecture reprend à la nouvelle position au relâchement
+        Timeline.ScrubStarted += (_, _) =>
+        {
+            _resumeAfterScrub = _playing && _jogDir == 0 && Timeline.IsScrubbingPlayhead;
+            StopPlayback();
+            _dragging = true;
+        };
+        Timeline.ScrubCompleted += (_, _) =>
+        {
+            _dragging = false;
+            if (_resumeAfterScrub)
+            {
+                _resumeAfterScrub = false;
+                _ = StartPlaybackAsync();
+            }
+            else RequestFrame(); // image exacte au relâchement
+        };
         Timeline.ValueChanged += (_, _) =>
         {
             if (_info == null) return;
@@ -69,7 +84,7 @@ public partial class MainWindow : Window
             UpdateTimeline();
         };
 
-        Closed += (_, _) => { _playCts?.Cancel(); _audio?.Dispose(); };
+        Closed += (_, _) => { _playCts?.Cancel(); _audio?.Dispose(); _waveCts?.Cancel(); };
 
         Loaded += async (_, _) =>
         {
@@ -161,6 +176,9 @@ public partial class MainWindow : Window
         Roi.ClearRoi();
 
         Timeline.Configure(info.Duration, info.Fps);
+        _waveCts?.Cancel();
+        Timeline.Waveform = null;
+        if (info.HasAudio) _ = LoadWaveformAsync(info);
         _start = 0;
         _end = info.Duration;
 
@@ -209,6 +227,25 @@ public partial class MainWindow : Window
             }
         }
         finally { _extracting = false; }
+    }
+
+    // ================================================================ Forme d'onde
+    CancellationTokenSource? _waveCts;
+
+    async Task LoadWaveformAsync(VideoInfo info)
+    {
+        _waveCts?.Cancel();
+        var cts = _waveCts = new CancellationTokenSource();
+        var data = new WaveformData(info.Duration);
+        Timeline.Waveform = data;
+        try
+        {
+            // Calcul hors du thread UI ; la timeline est redessinée régulièrement pendant le chargement
+            await Task.Run(() => FfmpegService.LoadWaveformAsync(info, data,
+                () => Dispatcher.BeginInvoke(new Action(Timeline.RefreshWaveform)), cts.Token));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { /* pas de forme d'onde : sans importance */ }
     }
 
     // ================================================================ Volume

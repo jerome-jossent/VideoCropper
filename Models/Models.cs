@@ -48,3 +48,21 @@ public record ExportJob(
     int Rotation,           // rotation supplémentaire (0/90/180/270 horaire)
     int OutW,               // taille de sortie après redimensionnement (0 = pas de redimensionnement)
     int OutH);
+
+/// <summary>
+/// Enveloppe de l'audio : pic d'amplitude (0..32767) par tranche de 5 ms, remplie progressivement en arrière-plan.
+/// </summary>
+public sealed class WaveformData
+{
+    public const int BinsPerSecond = 200;
+
+    public ushort[] Peaks { get; }
+
+    /// <summary>Nombre de tranches déjà calculées (le reste n'est pas encore connu).</summary>
+    public volatile int Filled;
+
+    public WaveformData(double durationSeconds)
+    {
+        Peaks = new ushort[(int)Math.Ceiling(Math.Max(0, durationSeconds) * BinsPerSecond) + 2];
+    }
+}
