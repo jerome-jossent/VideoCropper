@@ -26,9 +26,9 @@ public static class FfmpegService
         return File.Exists(local) ? local : exe; // sinon : PATH
     }
 
-    static string Inv(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);
+    internal static string Inv(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);
 
-    static ProcessStartInfo Psi(string exe, IEnumerable<string> args)
+    internal static ProcessStartInfo Psi(string exe, IEnumerable<string> args)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -159,7 +159,7 @@ public static class FfmpegService
     }
 
     /// <summary>Filtre FFmpeg pour une rotation horaire de 0/90/180/270°.</summary>
-    static string? RotateFilter(int rotation) => (((rotation % 360) + 360) % 360) switch
+    internal static string? RotateFilter(int rotation) => (((rotation % 360) + 360) % 360) switch
     {
         90 => "transpose=1",
         180 => "transpose=1,transpose=1",
@@ -167,7 +167,7 @@ public static class FfmpegService
         _ => null
     };
 
-    static string Chain(params string?[] parts) => string.Join(",", parts.Where(p => !string.IsNullOrEmpty(p)));
+    internal static string Chain(params string?[] parts) => string.Join(",", parts.Where(p => !string.IsNullOrEmpty(p)));
 
     // ---------------------------------------------------------------- Aperçu
     /// <param name="fast">Seek approximatif (image clé la plus proche, sans décoder jusqu'à la position exacte) : très rapide, idéal pendant le glissement.</param>
@@ -263,104 +263,46 @@ public static class FfmpegService
         }
     }
 
-    // ---------------------------------------------------------------- Lecture arrière
+    // ---------------------------------------------------------------- Rembobinage
     /// <summary>
-    /// Lecture à l'envers à vitesse normale (sans son). FFmpeg décode de petits blocs (~30 images)
-    /// qu'il inverse avec le filtre « reverse » ; le bloc précédent est préparé pendant l'affichage du bloc courant.
+    /// Rembobinage à vitesse réelle : la position recule au rythme de l'horloge, et l'image affichée est celle
+    /// de cette position. Les images sont obtenues par extractions (ExtractFrameAsync) lancées en parallèle,
+    /// ce qui donne un affichage moins fluide qu'une lecture normale mais démarre immédiatement.
+    /// onFrame est appelé dans le contexte de l'appelant (thread UI), avec des positions strictement décroissantes.
     /// </summary>
-    public static async Task PlayReverseAsync(VideoInfo info, double startT, int width, int rotation,
-        Action<byte[], int, int, double> onFrame, CancellationToken ct)
+    public static async Task RewindAsync(VideoInfo info, double startT, int width, int rotation,
+        Action<BitmapSource, double> onFrame, CancellationToken ct)
     {
-        width = Math.Min(width, 800); // aperçu plus léger pour tenir le temps réel
-        var (ow, oh) = info.Oriented(rotation);
-        int height = Math.Max(2, (int)Math.Round(width * (double)oh / ow / 2) * 2);
-        double frameDur = 1.0 / info.Fps;
-        double chunkSec = 30 * frameDur;
-        var clock = new Stopwatch();
+        const int Workers = 3;
+        var clock = Stopwatch.StartNew();
+        double lastShown = startT;
+        double latency = 0.3;        // estimation du temps d'extraction (moyenne glissante)
+        double halfFrame = 0.5 / info.Fps;
+        bool done = false;
 
-        double end = startT;
-        Task<List<byte[]>>? next = end > 0.0005
-            ? DecodeReversedChunkAsync(info, Math.Max(0, end - chunkSec), end, width, height, rotation, ct)
-            : null;
-        List<byte[]>? frames = null;
-        bool firstChunk = true;
-        try
+        async Task Worker(int index)
         {
-            while (next != null)
+            await Task.Delay(index * 120, ct); // décale les extractions pour obtenir des images à intervalles réguliers
+            while (!done && !ct.IsCancellationRequested)
             {
-                double chunkFrom = Math.Max(0, end - chunkSec);
-                frames = await next;
-                next = null;
-                if (firstChunk) { clock.Restart(); firstChunk = false; } // l'horloge démarre quand le 1er bloc est prêt
+                double began = clock.Elapsed.TotalSeconds;
+                // On vise l'endroit où en sera la lecture quand l'image arrivera
+                double target = Math.Max(0, startT - began - latency);
 
-                end = chunkFrom;
-                if (end > 0.0005)
-                    next = DecodeReversedChunkAsync(info, Math.Max(0, end - chunkSec), end, width, height, rotation, ct);
+                var bmp = await ExtractFrameAsync(info.Path, target, width, rotation, false, ct);
 
-                int m = frames.Count;
-                for (int k = 0; k < m; k++)
+                latency = 0.7 * latency + 0.3 * (clock.Elapsed.TotalSeconds - began);
+                // Les extractions parallèles peuvent arriver dans le désordre : on n'affiche que ce qui recule
+                if (target < lastShown - halfFrame)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    double ft = chunkFrom + (m - 1 - k) * frameDur;   // les images sortent dans l'ordre inverse
-                    double due = startT - ft;                          // temps écoulé à partir duquel l'afficher
-                    if (clock.Elapsed.TotalSeconds - due > 0.25) continue; // trop en retard : on saute
-
-                    double wait;
-                    while ((wait = due - clock.Elapsed.TotalSeconds) > 0.002)
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(wait, 0.02)), ct);
-
-                    onFrame(frames[k], width, height, ft);
+                    lastShown = target;
+                    onFrame(bmp, target);
                 }
-                foreach (var f in frames) ArrayPool<byte>.Shared.Return(f);
-                frames = null;
+                if (target <= 0) done = true;
             }
         }
-        finally
-        {
-            if (frames != null) foreach (var f in frames) ArrayPool<byte>.Shared.Return(f);
-            if (next != null) _ = next.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
-        }
-    }
 
-    static async Task<List<byte[]>> DecodeReversedChunkAsync(VideoInfo info, double from, double to,
-        int width, int height, int rotation, CancellationToken ct)
-    {
-        var args = new[]
-        {
-            "-hide_banner", "-loglevel", "error", "-hwaccel", "auto",
-            "-ss", Inv(from), "-i", info.Path, "-t", Inv(to - from),
-            "-an", "-vf", Chain(RotateFilter(rotation), $"scale={width}:{height}", "reverse"),
-            "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1"
-        };
-        using var p = Process.Start(Psi(FfmpegPath, args))!;
-        using var reg = ct.Register(() => { try { p.Kill(true); } catch { } });
-        _ = p.StandardError.ReadToEndAsync();
-
-        var stream = p.StandardOutput.BaseStream;
-        int frameSize = width * height * 3;
-        var frames = new List<byte[]>();
-        try
-        {
-            while (true)
-            {
-                var buf = ArrayPool<byte>.Shared.Rent(frameSize);
-                int read = 0;
-                while (read < frameSize)
-                {
-                    int r = await stream.ReadAsync(buf, read, frameSize - read, ct);
-                    if (r == 0) break;
-                    read += r;
-                }
-                if (read < frameSize) { ArrayPool<byte>.Shared.Return(buf); break; }
-                frames.Add(buf);
-            }
-        }
-        catch
-        {
-            foreach (var f in frames) ArrayPool<byte>.Shared.Return(f);
-            throw;
-        }
-        return frames;
+        await Task.WhenAll(Enumerable.Range(0, Workers).Select(Worker));
     }
 
     // ---------------------------------------------------------------- Encodeurs

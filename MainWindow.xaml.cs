@@ -337,7 +337,7 @@ public partial class MainWindow : Window
 
     // ---- Zone « image précédente / suivante »
     //  Clic gauche : image suivante ; maintenu : lecture (avec le son) jusqu'au relâchement.
-    //  Clic droit  : image précédente ; maintenu : lecture arrière à vitesse normale (sans son).
+    //  Clic droit  : image précédente ; maintenu : rembobinage à vitesse réelle jusqu'au relâchement.
     const int JogHoldMs = 350;
     int _jogDir;                       // 0 = inactif, 1 = avant (gauche), -1 = arrière (droit)
     bool _jogHolding;
@@ -355,14 +355,23 @@ public partial class MainWindow : Window
         e.Handled = true;
 
         Step(_jogDir, false); // réaction immédiate : une image
+
         var cts = _jogHoldCts = new CancellationTokenSource();
         try { await Task.Delay(JogHoldMs, cts.Token); }
         catch (OperationCanceledException) { return; } // relâché avant : simple clic
 
         if (_jogDir == 0 || _info == null) return;
         _jogHolding = true;
-        if (_jogDir > 0) _ = StartPlaybackAsync(jog: true);
-        else _ = StartReversePlaybackAsync();
+        if (_jogDir > 0)
+        {
+            Status.Text = "Lecture…";
+            _ = StartPlaybackAsync(jog: true);
+        }
+        else
+        {
+            Status.Text = "Rembobinage…";
+            _ = StartRewindAsync();
+        }
     }
 
     void Jog_MouseUp(object sender, MouseButtonEventArgs e)
@@ -386,36 +395,50 @@ public partial class MainWindow : Window
         _jogDir = 0;
         _jogHolding = false;
         JogZone.ReleaseMouseCapture();
-        if (wasHolding) StopPlayback();
+        if (wasHolding)
+        {
+            StopPlayback();
+            Status.Text = "";
+        }
     }
 
-    async Task StartReversePlaybackAsync()
+    async Task StartRewindAsync()
     {
         if (_info == null || _playing) return;
         var info = _info;
         double t0 = Timeline.Value;
-        if (t0 <= 0.001) return; // déjà au début
+        if (t0 <= 0.001) { Status.Text = "Début de la vidéo"; return; }
 
         _playing = true;
         _playStopAtEnd = false;
         UpdatePlayButton();
 
+        string? error = null;
         var cts = _playCts = new CancellationTokenSource();
         try
         {
-            await FfmpegService.PlayReverseAsync(info, t0, 960, _userRot, ShowPlayFrame, cts.Token);
+            await FfmpegService.RewindAsync(info, t0, 800, _userRot, ShowRewindFrame, cts.Token);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Status.Text = "Lecture arrière : " + ex.Message.Split('\n')[0]; }
+        catch (Exception ex) { error = ex.Message; }
         finally
         {
-            if (_playCts == cts) // début de la vidéo atteint
+            if (_playCts == cts) // relâché, début atteint ou erreur
             {
                 _playing = false;
                 UpdatePlayButton();
-                RequestFrame();
+                RequestFrame(); // image exacte à la position d'arrêt
             }
         }
+
+        if (error != null)
+            MessageBox.Show("Rembobinage impossible :\n\n" + error, AppTitle, MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    void ShowRewindFrame(BitmapSource bmp, double t)
+    {
+        Roi.SetImage(bmp);
+        Timeline.Value = t;
     }
 
     // Utilisent la position actuelle de la tête de lecture (y compris depuis le menu clic droit)
